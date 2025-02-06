@@ -1,5 +1,6 @@
 using System;
 using Core.Entities;
+using Core.Interfaces;
 using Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,26 +9,27 @@ namespace API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")] //how server know where to sent incoming https request - [controller] is replaced by class name minus word Controller of this class
-public class ProductsController : ControllerBase
+public class ProductsController(IProductRepository repo) : ControllerBase
 {
-    private readonly StoreContext _context; // Declare the context field
+    //!old way of assign context:
+    // private readonly StoreContext _context; // Declare the context field
 
-    // Constructor to inject the StoreContext
-    public ProductsController(StoreContext context)
-    {
-        _context = context; // Assign the injected context to the field
-    }
+    // // Constructor to inject the StoreContext
+    // public ProductsController(StoreContext context)
+    // {
+    //     _context = context; // Assign the injected context to the field
+    // }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Product>>> GetProducts()
+    public async Task<ActionResult<IReadOnlyList<Product>>> GetProducts(string? brand, string? type, string? sort)
     {
-        return await _context.Products.ToListAsync(); // Use the context field
+        return Ok(await repo.GetProductsAsync(brand, type, sort)); // Use the context field
     }
 
     [HttpGet("{id:int}")] //api/products/2
     public async Task<ActionResult<Product>> GetProduct(int id)
     {
-        var product = await _context.Products.FindAsync(id);
+        var product = await repo.GetProductByIdAsync(id);
 
         if (product == null) return NotFound();
 
@@ -40,10 +42,14 @@ public class ProductsController : ControllerBase
         //konwencjonalnie Entity framework patrzy w requestcie do body, aby sprawdzic czy wystepuje obiekt 
         //* public async Task<ActionResult<Product>> CreateProduct([FromBody]Product product) - jesli nie uzywalibysmy na poczatku pliku '[ApiController]' to przy parametrze trzeba by dodać '[FromBody]'. 
 
-        _context.Products.Add(product);
-        await _context.SaveChangesAsync();
+        repo.AddProduct(product);
 
-        return product;
+        if (await repo.SaveChangesAsync())
+        {
+            return CreatedAtAction("GetProduct", new { id = product.Id }, product);
+        }
+
+        return BadRequest("Problem creating a product");
     }
 
     [HttpPut("{id:int}")]
@@ -54,11 +60,15 @@ public class ProductsController : ControllerBase
             return BadRequest("Cannot update this product");
         }
         //now tell Enitity framework that this product (as argument) is a Product Entitity and the Entity framework should track its state.
-        _context.Entry(product).State = EntityState.Modified; //we tell Entity Framework's Tracker that product has benn modified so when we call saveChange will work properly
+        // _context.Entry(product).State = EntityState.Modified; //we tell Entity Framework's Tracker that product has benn modified so when we call saveChange will work properly
+        repo.UpdateProduct(product);
+        if (await repo.SaveChangesAsync())
+        {
+            return NoContent();
+        }
 
-        await _context.SaveChangesAsync();
+        return BadRequest("Problem updating the product");
 
-        return NoContent();
     }
 
     [HttpDelete("{id:int}")]
@@ -67,17 +77,37 @@ public class ProductsController : ControllerBase
         // if(ProductExists(id)){
         //      return BadRequest("Cannot remove this product");
         // }
-        var product = await _context.Products.FindAsync(id);
-        if (product == null) return NotFound();
-        _context.Products.Remove(product); //now Entity framework track this product removal
-        await _context.SaveChangesAsync();
+        // var product = await _context.Products.FindAsync(id);
+        // if (product == null) return NotFound();
+        // _context.Products.Remove(product); //now Entity framework track this product removal
+        // await _context.SaveChangesAsync();
 
-        return NoContent();
+        var product = await repo.GetProductByIdAsync(id);
+        if (product == null) return NotFound();
+        repo.DeleteProduct(product); //now Entity framework track this product removal
+        if (await repo.SaveChangesAsync())
+        {
+            return NoContent();
+        }
+
+        return BadRequest("Problem deleting the product");
+    }
+
+    [HttpGet("brands")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetBrands()
+    {
+        return Ok(await repo.GetBrandsAsync());
+    }
+
+    [HttpGet("types")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetTypes()
+    {
+        return Ok(await repo.GetTypesAsync());
     }
 
     private bool ProductExists(int id)
     {
-        return _context.Products.Any(x => x.Id == id);
+        return repo.ProductExists(id);
     }
 
 }
